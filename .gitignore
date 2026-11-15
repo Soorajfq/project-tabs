@@ -1,0 +1,6 @@
+config.php
+storage/uploads/
+storage/sessions/
+storage/tmp/
+storage/error.log
+*.zip
