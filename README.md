@@ -42,6 +42,18 @@ Full steps, Google Drive setup, cron and troubleshooting are in [INSTALL.md](INS
 - Backups can be exported and stored, but there is no in-app Restore button yet.
 - Plain text only (no rich formatting).
 
+## Roadmap
+
+If this reaches **100 downloads**, I'll build:
+
+1. **Multiple user logins**, so a small team can each have their own account.
+2. **Cloud hosting**, so you can use Project Tabs without setting up your own server.
+
+## Need help setting it up?
+
+Stuck on cPanel, the database, HTTPS or the Google Drive backup? Book me for a **$10 coffee** and I'll help you get it running.
+Email: soorajfq@gmail.com
+
 ## License
 
 MIT. See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
