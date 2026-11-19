@@ -84,7 +84,7 @@ The zip contains everything, but there is no Restore button in the app yet. If y
 cPanel > **Backup** or your host's own backups cover the server itself, which is worth having as well.
 
 ## Updating later
-Upload the new zip and extract it over the old files. The zip does not contain `config.php` or any of your data, so your settings, database and uploaded files stay as they are. (It does bring back `setup.php`; delete it again, or leave it, since it refuses to run once your login exists.) The one new database table (for backup settings) is created automatically the first time it is needed. Phones pick up new CSS and JS by themselves because `index.php` carries a version number.
+Upload the new zip and extract it over the old files. The zip does not contain `config.php` or any of your data, so your settings, database and uploaded files stay as they are. (It does bring back `setup.php`; delete it again, or leave it, since it refuses to run once your login exists.) The database additions (backup settings in 1.0, project groups in 1.1) are added only, never removed: they are created automatically the first time they are needed, so your projects and files are untouched. The one new database table (for backup settings) is created automatically the first time it is needed. Phones pick up new CSS and JS by themselves because `index.php` carries a version number.
 
 ## If something goes wrong
 - **Blank page or error 500:** open `storage/error.log` in File Manager, and check that PHP is 7.4 or newer (cPanel > MultiPHP Manager).

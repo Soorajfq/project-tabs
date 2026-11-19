@@ -14,7 +14,7 @@
     menu: '<svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14"/></svg>'
   };
 
-  var state = { me: null, projects: [], tray: [], current: null, sections: [], loading: false };
+  var state = { me: null, projects: [], groups: [], tray: [], current: null, sections: [], loading: false };
   var drag = null;
 
   /* ---------- helpers ---------- */
@@ -154,20 +154,177 @@
   });
   $('#scroll').addEventListener('scroll', closePalette, { passive: true });
 
-  /* ---------- rail: project list ---------- */
+  /* ---------- rail: project list, groups, search ---------- */
+  var railQuery = '', addingGroup = false, moveAfterCreate = null, pdrag = null;
+  var collapsed = [];
+  try { collapsed = JSON.parse(localStorage.getItem('pt.collapsed') || '[]') || []; } catch (e) { collapsed = []; }
+  function saveCollapsed() { try { localStorage.setItem('pt.collapsed', JSON.stringify(collapsed)); } catch (e) { /* ignore */ } }
+  function groupOf(p) { return p.group_id ? state.groups.find(function (g) { return g.id === p.group_id; }) || null : null; }
+
+  function projectRow(p, showGroup) {
+    var open = h('button', { class: 'p-open', type: 'button' },
+      h('span', { class: 'p-name', text: p.name || 'Untitled' }),
+      h('span', { class: 'p-count', text: String(p.count) }));
+    open.addEventListener('click', function () { selectProject(p.id); });
+    var g = showGroup ? groupOf(p) : null;
+    if (g) open.insertBefore(h('span', { class: 'p-gtag', text: g.name, style: '--c:' + g.color }), open.lastChild);
+    var mv = h('button', { class: 'p-mv', type: 'button', text: '⋯', title: 'Move to a group', 'aria-label': 'Move ' + p.name + ' to a group' });
+    mv.addEventListener('click', function (e) { e.stopPropagation(); openMoveMenu(mv, p); });
+    var del = h('button', { class: 'p-del', type: 'button', html: ICON.x, 'aria-label': 'Delete project ' + p.name });
+    armDelete(del, function () { deleteProject(p); });
+    var li = h('li', { class: 'pitem' + (p.id === state.current ? ' active' : ''), draggable: true }, open, mv, del);
+    li.addEventListener('dragstart', function (e) {
+      pdrag = p.id; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', p.name);
+    });
+    li.addEventListener('dragend', function () { pdrag = null; clearDropMarks(); });
+    return li;
+  }
+  function clearDropMarks() {
+    document.querySelectorAll('.drop-on').forEach(function (n) { n.classList.remove('drop-on'); });
+  }
+  function dropTarget(el, groupId) {
+    el.addEventListener('dragover', function (e) {
+      if (pdrag == null) return;
+      e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+      clearDropMarks(); el.classList.add('drop-on');
+    });
+    el.addEventListener('dragleave', function (e) { if (!el.contains(e.relatedTarget)) el.classList.remove('drop-on'); });
+    el.addEventListener('drop', function (e) {
+      if (pdrag == null) return;
+      e.preventDefault(); var id = pdrag; pdrag = null; clearDropMarks();
+      moveProject(id, groupId);
+    });
+  }
+  function moveProject(id, groupId) {
+    var p = state.projects.find(function (x) { return x.id === id; });
+    if (!p) return;
+    var gid = groupId || null;
+    if ((p.group_id || null) === gid) return;
+    var before = p.group_id || null;
+    p.group_id = gid;
+    if (gid) collapsed = collapsed.filter(function (c) { return c !== gid; });
+    renderRail();
+    api('project.move', { id: id, group_id: gid || 0 }).catch(function (e) { p.group_id = before; renderRail(); toast(e.message); });
+  }
+  function groupHeader(g, list) {
+    var dot = h('button', { class: 'g-dot', type: 'button', 'data-swatch': '1', title: 'Change colour', 'aria-label': 'Change colour of ' + g.name });
+    dot.addEventListener('click', function (e) {
+      e.stopPropagation();
+      openPalette(dot, g.color, function (c) {
+        g.color = c; renderRail();
+        api('group.update', { id: g.id, color: c }).catch(function (e2) { toast(e2.message); });
+      });
+    });
+    var name = h('button', { class: 'g-name', type: 'button', text: g.name, title: 'Click to collapse. Double-click to rename.' });
+    name.addEventListener('click', function () {
+      var i = collapsed.indexOf(g.id);
+      if (i > -1) collapsed.splice(i, 1); else collapsed.push(g.id);
+      saveCollapsed();
+      var bx = name.closest('.g-box'); if (bx) bx.classList.toggle('closed', collapsed.indexOf(g.id) > -1);
+    });
+    function startRename(e) {
+      if (e) e.preventDefault();
+      var inp = h('input', { class: 'g-edit', value: g.name, maxLength: 120, 'aria-label': 'Rename group' });
+      name.replaceWith(inp); inp.focus(); inp.select();
+      var done = false;
+      function commit() {
+        if (done) return; done = true;
+        var v = inp.value.trim();
+        if (v && v !== g.name) { g.name = v; api('group.update', { id: g.id, name: v }).catch(function (e2) { toast(e2.message); }); }
+        renderRail();
+      }
+      inp.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') commit(); if (ev.key === 'Escape') { done = true; renderRail(); } });
+      inp.addEventListener('blur', commit);
+    }
+    name.addEventListener('dblclick', startRename);
+    var pen = h('button', { class: 'p-mv', type: 'button', text: '✎', title: 'Rename group', 'aria-label': 'Rename group ' + g.name });
+    pen.addEventListener('click', function (e) { e.stopPropagation(); startRename(); });
+    var chev = h('span', { class: 'g-chev', html: ICON.chev });
+    var del = h('button', { class: 'p-del', type: 'button', html: ICON.x, title: 'Delete group (projects are kept)', 'aria-label': 'Delete group ' + g.name });
+    armDelete(del, function () {
+      api('group.delete', { id: g.id }).then(function () {
+        state.groups = state.groups.filter(function (x) { return x.id !== g.id; });
+        state.projects.forEach(function (p) { if (p.group_id === g.id) p.group_id = null; });
+        renderRail();
+      }).catch(function (e) { toast(e.message); });
+    });
+    var head = h('div', { class: 'g-head', style: '--c:' + g.color }, dot, name, h('span', { class: 'p-count', text: String(list.length) }), pen, chev, del);
+    dropTarget(head, g.id);
+    return head;
+  }
+  function newGroupRow() {
+    var inp = h('input', { placeholder: 'Group name, e.g. Clients', maxLength: 120, 'aria-label': 'New group name' });
+    var form = h('form', { class: 'g-new' }, inp, h('button', { type: 'submit', text: 'Add' }));
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var v = inp.value.trim(); if (!v) return;
+      var color = PALETTE[state.groups.length % PALETTE.length][1];
+      api('group.create', { name: v, color: color }).then(function (g) {
+        state.groups.push(g); addingGroup = false;
+        var mid = moveAfterCreate; moveAfterCreate = null;
+        if (mid) moveProject(mid, g.id); else renderRail();
+      }).catch(function (err) { toast(err.message); });
+    });
+    inp.addEventListener('keydown', function (e) { if (e.key === 'Escape') { addingGroup = false; moveAfterCreate = null; renderRail(); } });
+    setTimeout(function () { inp.focus(); }, 0);
+    return h('li', { class: 'g-newrow' }, form);
+  }
   function renderRail() {
     var ul = $('#plist'); ul.innerHTML = '';
-    state.projects.forEach(function (p) {
-      var open = h('button', { class: 'p-open', type: 'button' },
-        h('span', { class: 'p-name', text: p.name || 'Untitled' }),
-        h('span', { class: 'p-count', text: String(p.count) }));
-      open.addEventListener('click', function () { selectProject(p.id); });
-      var del = h('button', { class: 'p-del', type: 'button', html: ICON.x, 'aria-label': 'Delete project ' + p.name });
-      armDelete(del, function () { deleteProject(p); });
-      ul.append(h('li', { class: 'pitem' + (p.id === state.current ? ' active' : '') }, open, del));
+    if (addingGroup) ul.append(newGroupRow());
+    var q = railQuery.trim().toLowerCase();
+    if (q) {
+      var hits = state.projects.filter(function (p) { return (p.name || '').toLowerCase().indexOf(q) > -1; });
+      hits.forEach(function (p) { ul.append(projectRow(p, true)); });
+      if (!hits.length) ul.append(h('li', { class: 'note', text: 'No project matches "' + railQuery.trim() + '".', style: 'padding:8px 10px' }));
+      return;
+    }
+    var loose = state.projects.filter(function (p) { return !groupOf(p); });
+    var looseBox = h('li', { class: 'g-loose' });
+    var looseUl = h('ul', { class: 'g-list' });
+    loose.forEach(function (p) { looseUl.append(projectRow(p, false)); });
+    looseBox.append(looseUl);
+    dropTarget(looseBox, null);
+    if (state.groups.length && !loose.length) looseBox.classList.add('empty');
+    if (loose.length || state.groups.length) ul.append(looseBox);
+    state.groups.forEach(function (g) {
+      var list = state.projects.filter(function (p) { return p.group_id === g.id; });
+      var box = h('li', { class: 'g-box' + (collapsed.indexOf(g.id) > -1 ? ' closed' : ''), style: '--c:' + g.color });
+      box.append(groupHeader(g, list));
+      var gl = h('ul', { class: 'g-list in' });
+      list.forEach(function (p) { gl.append(projectRow(p, false)); });
+      if (!list.length) gl.append(h('li', { class: 'note g-empty', text: 'Empty. Drag a project here, or use ⋯ on a project.' }));
+      box.append(gl);
+      ul.append(box);
     });
-    if (!state.projects.length) ul.append(h('li', { class: 'note', text: 'No projects yet. Create one above.', style: 'padding:8px 10px' }));
+    if (!state.projects.length && !state.groups.length) ul.append(h('li', { class: 'note', text: 'No projects yet. Create one above.', style: 'padding:8px 10px' }));
   }
+
+  /* move menu (⋯) */
+  var pmenu = $('#pmenu');
+  function closeMoveMenu() { pmenu.hidden = true; }
+  function openMoveMenu(anchor, p) {
+    pmenu.innerHTML = '';
+    pmenu.append(h('div', { class: 'pm-title', text: 'Move to' }));
+    function item(label, color, fn, on) {
+      var b = h('button', { type: 'button', class: 'pm-item' + (on ? ' on' : ''), role: 'menuitem' },
+        h('span', { class: 'pm-dot', style: color ? 'background:' + color : 'visibility:hidden' }), h('span', { text: label }));
+      b.addEventListener('click', function () { closeMoveMenu(); fn(); });
+      pmenu.append(b);
+    }
+    item('No group', null, function () { moveProject(p.id, null); }, !p.group_id);
+    state.groups.forEach(function (g) { item(g.name, g.color, function () { moveProject(p.id, g.id); }, p.group_id === g.id); });
+    item('New group…', null, function () { addingGroup = true; moveAfterCreate = p.id; renderRail(); });
+    pmenu.hidden = false;
+    var r = anchor.getBoundingClientRect(), w = pmenu.offsetWidth, hh = pmenu.offsetHeight;
+    var x = Math.max(8, Math.min(r.left, window.innerWidth - w - 8));
+    var y = r.bottom + 4; if (y + hh > window.innerHeight - 8) y = Math.max(8, r.top - hh - 4);
+    pmenu.style.left = x + 'px'; pmenu.style.top = y + 'px';
+  }
+  document.addEventListener('pointerdown', function (e) { if (!pmenu.hidden && !pmenu.contains(e.target)) closeMoveMenu(); });
+  $('#plist').addEventListener('scroll', closeMoveMenu, { passive: true });
+  $('#projSearch').addEventListener('input', function () { railQuery = this.value; renderRail(); });
+  $('#newGroupBtn').addEventListener('click', function () { addingGroup = true; moveAfterCreate = null; renderRail(); });
   function selectProject(id) {
     if (id === state.current) { closeRail(); return; }
     flushAll();
@@ -537,7 +694,7 @@
     var inp = $('#newProject'), v = inp.value.trim(); if (!v) return;
     flushAll();
     api('project.create', { name: v }).then(function (p) {
-      state.projects.unshift({ id: p.id, name: p.name, count: 0 });
+      state.projects.unshift({ id: p.id, name: p.name, count: 0, group_id: null }); railQuery = ''; $('#projSearch').value = '';
       inp.value = ''; closeRail();
       state.current = p.id; state.sections = []; state.loading = false;
       try { localStorage.setItem('pt.current', String(p.id)); } catch (e2) { /* ignore */ }
@@ -804,7 +961,7 @@
   /* ---------- start ---------- */
   function start() {
     get('a=bootstrap').then(function (d) {
-      state.me = d.me; state.projects = d.projects; state.tray = d.tray;
+      state.me = d.me; state.projects = d.projects; state.groups = d.groups || []; state.tray = d.tray;
       renderTray(); renderRail();
       var last = null;
       try { last = parseInt(localStorage.getItem('pt.current'), 10); } catch (e) { /* ignore */ }

@@ -15,7 +15,7 @@ if (!$user) {
 }
 header('Cache-Control: no-store');
 $maxMb = (int)(cfg('max_upload_mb') ?: 20);
-$v = '2'; // bump to refresh cached CSS/JS after an update
+$v = '3'; // bump to refresh cached CSS/JS after an update
 ?><!doctype html>
 <html lang="en">
 <head>
@@ -46,7 +46,14 @@ $v = '2'; // bump to refresh cached CSS/JS after an update
         <button type="submit">Create</button>
       </form>
     </div>
-    <div class="rail-label">Projects</div>
+    <div class="rail-search">
+      <label class="sr" for="projSearch">Search projects</label>
+      <input id="projSearch" type="search" placeholder="Search projects" autocomplete="off">
+    </div>
+    <div class="rail-labelrow">
+      <div class="rail-label">Projects</div>
+      <button class="link-btn" id="newGroupBtn" type="button">+ Group</button>
+    </div>
     <ul class="plist" id="plist"></ul>
     <div class="rail-foot">
       <button class="link-btn" id="signOut" type="button">Sign out</button>
@@ -95,6 +102,7 @@ $v = '2'; // bump to refresh cached CSS/JS after an update
   </main>
 </div>
 
+<div class="pmenu" id="pmenu" hidden role="menu"></div>
 <div class="palette" id="palette" hidden role="menu" aria-label="Choose a colour"></div>
 
 <div class="lightbox" id="lightbox" hidden role="dialog" aria-modal="true" aria-label="Image viewer">

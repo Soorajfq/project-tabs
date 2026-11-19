@@ -319,3 +319,25 @@ function tmp_dir(): string {
     }
     return $d;
 }
+
+/* ---------- Project groups (added in v1.1). Safe to run on every request: only adds, never removes. ---------- */
+
+function ensure_groups(): void {
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $pdo = db();
+    $pdo->exec('CREATE TABLE IF NOT EXISTS project_groups (
+      id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(120) NOT NULL,
+      color CHAR(7) NOT NULL,
+      position INT NOT NULL DEFAULT 0
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+    $st = $pdo->prepare("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'projects' AND COLUMN_NAME = 'group_id'");
+    $st->execute();
+    if ((int)$st->fetchColumn() === 0) {
+        $pdo->exec('ALTER TABLE projects ADD COLUMN group_id INT UNSIGNED NULL DEFAULT NULL');
+    }
+    $done = true;
+}

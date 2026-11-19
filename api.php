@@ -16,6 +16,7 @@ if (!$user) {
 
 $method = $_SERVER['REQUEST_METHOD'];
 $pdo = db();
+ensure_groups();
 
 /* ---------- small helpers ---------- */
 
@@ -82,13 +83,17 @@ function php_upload_limit_message(): string {
 if ($method === 'GET') {
     $a = $_GET['a'] ?? '';
     if ($a === 'bootstrap') {
-        $projects = $pdo->query('SELECT p.id, p.name, (SELECT COUNT(*) FROM sections s WHERE s.project_id = p.id) AS cnt FROM projects p ORDER BY p.id DESC')->fetchAll();
+        $projects = $pdo->query('SELECT p.id, p.name, p.group_id, (SELECT COUNT(*) FROM sections s WHERE s.project_id = p.id) AS cnt FROM projects p ORDER BY p.id DESC')->fetchAll();
+        $groups = $pdo->query('SELECT id, name, color FROM project_groups ORDER BY position, id')->fetchAll();
         $tray = $pdo->query('SELECT id, title, color FROM tray_titles ORDER BY position, id')->fetchAll();
         json_out([
             'me' => ['username' => $user['username'], 'totp' => (bool)$user['totp_enabled']],
             'projects' => array_map(function ($p) {
-                return ['id' => (int)$p['id'], 'name' => $p['name'], 'count' => (int)$p['cnt']];
+                return ['id' => (int)$p['id'], 'name' => $p['name'], 'count' => (int)$p['cnt'], 'group_id' => $p['group_id'] === null ? null : (int)$p['group_id']];
             }, $projects),
+            'groups' => array_map(function ($g) {
+                return ['id' => (int)$g['id'], 'name' => $g['name'], 'color' => $g['color']];
+            }, $groups),
             'tray' => array_map(function ($t) {
                 return ['id' => (int)$t['id'], 'title' => $t['title'], 'color' => $t['color']];
             }, $tray),
@@ -179,6 +184,53 @@ try {
         $names = stored_names_for('s.project_id = ?', [$id]);
         $pdo->prepare('DELETE FROM projects WHERE id = ?')->execute([$id]);
         delete_stored_files($names);
+        json_out(['ok' => true]);
+    }
+
+    case 'project.move': {
+        $gid = (int)($in['group_id'] ?? 0);
+        if ($gid > 0) {
+            $st = $pdo->prepare('SELECT 1 FROM project_groups WHERE id = ?');
+            $st->execute([$gid]);
+            if (!$st->fetchColumn()) {
+                fail('That group no longer exists.');
+            }
+        }
+        $pdo->prepare('UPDATE projects SET group_id = ? WHERE id = ?')->execute([$gid > 0 ? $gid : null, (int)($in['id'] ?? 0)]);
+        json_out(['ok' => true]);
+    }
+
+    /* --- project groups --- */
+    case 'group.create': {
+        $name = str_in($in['name'] ?? '', 120);
+        if ($name === '') {
+            fail('Give the group a name.');
+        }
+        $pos = (int)$pdo->query('SELECT COALESCE(MAX(position), 0) + 1 FROM project_groups')->fetchColumn();
+        $color = color_in($in['color'] ?? '');
+        $pdo->prepare('INSERT INTO project_groups (name, color, position) VALUES (?, ?, ?)')->execute([$name, $color, $pos]);
+        json_out(['id' => (int)$pdo->lastInsertId(), 'name' => $name, 'color' => $color]);
+    }
+
+    case 'group.update': {
+        $id = (int)($in['id'] ?? 0);
+        if (isset($in['name'])) {
+            $name = str_in($in['name'], 120);
+            if ($name !== '') {
+                $pdo->prepare('UPDATE project_groups SET name = ? WHERE id = ?')->execute([$name, $id]);
+            }
+        }
+        if (isset($in['color'])) {
+            $pdo->prepare('UPDATE project_groups SET color = ? WHERE id = ?')->execute([color_in($in['color']), $id]);
+        }
+        json_out(['ok' => true]);
+    }
+
+    case 'group.delete': {
+        // Projects are kept: they simply become ungrouped.
+        $id = (int)($in['id'] ?? 0);
+        $pdo->prepare('UPDATE projects SET group_id = NULL WHERE group_id = ?')->execute([$id]);
+        $pdo->prepare('DELETE FROM project_groups WHERE id = ?')->execute([$id]);
         json_out(['ok' => true]);
     }
 

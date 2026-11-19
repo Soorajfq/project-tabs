@@ -32,7 +32,13 @@ function build_backup_zip(string $dest): array {
     }
 
     $tray = $pdo->query('SELECT id, title, color, position FROM tray_titles ORDER BY position, id')->fetchAll();
+    ensure_groups();
     $projects = $pdo->query('SELECT * FROM projects ORDER BY id')->fetchAll();
+    $groups = $pdo->query('SELECT id, name, color, position FROM project_groups ORDER BY position, id')->fetchAll();
+    $groupName = [];
+    foreach ($groups as $g) {
+        $groupName[(int)$g['id']] = $g['name'];
+    }
 
     $secByProject = [];
     foreach ($pdo->query('SELECT * FROM sections ORDER BY project_id, position, id')->fetchAll() as $s) {
@@ -48,6 +54,7 @@ function build_backup_zip(string $dest): array {
         'version' => 1,
         'created_at' => gmdate('c'),
         'tray' => $tray,
+        'groups' => $groups,
         'projects' => [],
     ];
     $nSections = 0;
@@ -59,7 +66,8 @@ function build_backup_zip(string $dest): array {
         $md = '# ' . $p['name'] . "\n\n";
         $pj = [
             'id' => $pid, 'name' => $p['name'], 'created_at' => $p['created_at'], 'updated_at' => $p['updated_at'],
-            'folder' => $folder, 'sections' => [],
+            'folder' => $folder, 'group' => $p['group_id'] !== null ? ($groupName[(int)$p['group_id']] ?? null) : null,
+            'group_id' => $p['group_id'] !== null ? (int)$p['group_id'] : null, 'sections' => [],
         ];
         foreach ($secByProject[$pid] ?? [] as $s) {
             $sid = (int)$s['id'];
