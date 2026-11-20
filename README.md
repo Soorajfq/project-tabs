@@ -12,9 +12,7 @@ A small, private, self-hosted notebook for keeping everything about a project in
 - Every section is a plain-text box that grows as you type. Links become clickable.
 - Attach images and documents to any section by drag and drop, paste, or the attach button.
 
-<p><img src="docs/groups-desktop.png" width="640" alt="Project groups"> <img src="docs/groups-phone.png" width="220" alt="Groups on phone"></p>
-
-<p><img src="docs/phone-tabs.png" width="280" alt="Phone"> <img src="docs/desktop-dark.png" width="520" alt="Dark mode"></p>
+<p><img src="docs/groups-phone.png" width="200" alt="Project groups on phone"> <img src="docs/phone-tabs.png" width="200" alt="Phone"> <img src="docs/desktop-dark.png" width="480" alt="Dark mode"></p>
 
 ## Features
 
