@@ -11,6 +11,8 @@
     grip: '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><circle cx="5.5" cy="3.5" r="1.3"/><circle cx="10.5" cy="3.5" r="1.3"/><circle cx="5.5" cy="8" r="1.3"/><circle cx="10.5" cy="8" r="1.3"/><circle cx="5.5" cy="12.5" r="1.3"/><circle cx="10.5" cy="12.5" r="1.3"/></svg>',
     x: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
     chev: '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10l5-5 5 5"/></svg>',
+    lock: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" fill="currentColor" fill-opacity=".25"/><path d="M5 7V5a3 3 0 016 0v2"/></svg>',
+    unlock: '<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5 7V5a3 3 0 015.6-1.5"/></svg>',
     menu: '<svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14"/></svg>'
   };
 
@@ -338,7 +340,7 @@
     return get('a=project&id=' + id).then(function (d) {
       if (state.current !== id) return;
       state.sections = d.sections; state.loading = false;
-      renderProject();
+      renderProject(); watchPin();
     }).catch(function (err) {
       state.loading = false; renderProject(); toast(err.message);
     });
@@ -351,6 +353,76 @@
         if (state.projects.length) openProject(state.projects[0].id); else { renderRail(); renderProject(); }
       } else renderRail();
     }).catch(function (e) { toast(e.message); });
+  }
+
+  /* ---------- PIN lock ---------- */
+  var pinTimer = null, hiddenAt = 0;
+  function anyOpenLocked() { return state.sections.some(function (x) { return x.locked && !x.masked; }); }
+  function relockView() {
+    flushAll();
+    if (state.current != null) return openProject(state.current);
+  }
+  function watchPin() {
+    clearInterval(pinTimer); pinTimer = null;
+    if (!anyOpenLocked()) return;
+    pinTimer = setInterval(function () {
+      if (!anyOpenLocked()) { clearInterval(pinTimer); pinTimer = null; return; }
+      get('a=pin').then(function (d) { if (!d.secs) relockView(); }).catch(function () { /* ignore */ });
+    }, 15000);
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+    if (hiddenAt && Date.now() - hiddenAt > 60000 && anyOpenLocked()) {
+      api('pin.lock').catch(function () { /* ignore */ }).then(relockView);
+    }
+    hiddenAt = 0;
+  });
+
+  /** Asks for the 6-digit PIN. Resolves when the server accepted it, rejects if cancelled. */
+  function askPin(why) {
+    return new Promise(function (resolve, reject) {
+      var overlay = h('div', { class: 'modal pin-modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Enter PIN' });
+      var inp = h('input', { id: 'pinInput', type: 'password', inputmode: 'numeric', autocomplete: 'off', maxLength: 6, class: 'pin-input', 'aria-label': '6-digit PIN', placeholder: '••••••' });
+      var err = h('p', { class: 'err', role: 'alert' });
+      var cancel = h('button', { class: 'btn small alt', type: 'button', text: 'Cancel' });
+      var forgot = h('button', { class: 'link-btn', type: 'button', text: 'Forgot PIN?' });
+      var card = h('div', { class: 'modal-card pin-card' },
+        h('div', { class: 'modal-body' }, h('h3', { text: 'Enter your PIN' }), h('p', { class: 'note', text: why || 'This section is locked.' }), inp, err,
+          h('div', { class: 'set-row' }, cancel, forgot)));
+      overlay.append(card); document.body.append(overlay);
+      var busyPin = false;
+      function close() { overlay.remove(); }
+      function done(ok) { close(); if (ok) resolve(); else reject(new Error('cancelled')); }
+      function submit() {
+        if (busyPin || !/^\d{6}$/.test(inp.value)) return;
+        busyPin = true; err.textContent = '';
+        api('pin.unlock', { pin: inp.value }).then(function () { done(true); }).catch(function (e) {
+          busyPin = false; err.textContent = e.message; inp.value = ''; inp.focus();
+        });
+      }
+      inp.addEventListener('input', function () { inp.value = inp.value.replace(/\D/g, '').slice(0, 6); if (inp.value.length === 6) submit(); });
+      inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') submit(); if (e.key === 'Escape') { e.stopPropagation(); done(false); } });
+      cancel.addEventListener('click', function () { done(false); });
+      forgot.addEventListener('click', function () { done(false); openSettings(); });
+      overlay.addEventListener('pointerdown', function (e) { if (e.target === overlay) done(false); });
+      setTimeout(function () { inp.focus(); }, 0);
+    });
+  }
+  function revealThen(fn) {
+    askPin('Enter your PIN to open locked sections for 5 minutes.').then(fn).catch(function () { /* cancelled */ });
+  }
+  function toggleLock(s) {
+    if (!s.locked) {
+      if (!state.me.pin_set) { toast('Set a 6-digit PIN in Settings first.'); openSettings(); return; }
+      flushAll();
+      api('section.lock', { id: s.id, locked: true }).then(function () { return openProject(state.current); }).catch(function (e) { toast(e.message); });
+      return;
+    }
+    function off() {
+      flushAll();
+      api('section.lock', { id: s.id, locked: false }).then(function () { return openProject(state.current); }).catch(function (e) { toast(e.message); });
+    }
+    if (s.masked) revealThen(off); else off();
   }
 
   /* ---------- project window ---------- */
@@ -415,6 +487,18 @@
       }).catch(function (e) { toast(e.message); });
     });
 
+    var lockBtn = h('button', { class: 's-btn s-lock' + (s.locked ? ' on' : ''), type: 'button', html: s.locked ? ICON.lock : ICON.unlock,
+      title: s.locked ? 'Locked with your PIN. Click to remove the lock.' : 'Lock this section with your PIN', 'aria-label': s.locked ? 'Remove lock' : 'Lock this section' });
+    lockBtn.addEventListener('click', function () { toggleLock(s); });
+    if (s.masked) {
+      var reveal = h('button', { class: 'btn small', type: 'button', text: 'Reveal with PIN' });
+      reveal.addEventListener('click', function () { revealThen(function () { openProject(state.current); }); });
+      card.classList.add('masked');
+      card.append(h('div', { class: 's-head' }, grip, name, lockBtn, dot, del),
+        h('div', { class: 'mask' }, h('div', { class: 'mask-dots', 'aria-hidden': 'true', text: '••••••••••••••' }),
+          h('div', { class: 'mask-note', text: 'Locked' + (s.file_count ? ' · ' + s.file_count + (s.file_count === 1 ? ' attachment' : ' attachments') : '') }), reveal));
+      return card;
+    }
     var ta = h('textarea', { class: 's-text', rows: 3, value: s.body, placeholder: 'Type or paste links, notes, anything. This box grows as you write.', 'aria-label': s.title + ' text', spellcheck: false });
     var links = h('div', { class: 'links' });
     var thumbs = h('div', { class: 'thumbs' }), docs = h('div', { class: 'docs' });
@@ -498,7 +582,7 @@
     });
     card.addEventListener('dragend', function () { card.draggable = false; card.classList.remove('dragging'); drag = null; clearMarker(); });
 
-    card.append(h('div', { class: 's-head' }, grip, name, dot, del), ta, links, thumbs, docs, foot);
+    card.append(h('div', { class: 's-head' }, grip, name, lockBtn, dot, del), ta, links, thumbs, docs, foot);
     return card;
   }
 
@@ -756,9 +840,11 @@
 
   function downloadBackup(btn, msg) {
     var idle = 'Download backup';
+    var retrying = false;
     btn.disabled = true; btn.textContent = 'Preparing…'; msg.className = 'note'; msg.textContent = '';
     fetch('export.php', { method: 'POST', headers: { 'X-CSRF-Token': CSRF }, credentials: 'same-origin' }).then(function (r) {
       if (r.status === 401) { location.href = 'login.php'; throw new Error('Signed out'); }
+      if (r.status === 423) { var le = new Error('locked'); le.needPin = true; throw le; }
       if (!r.ok) return r.json().then(function (j) { throw new Error(j.error || 'The backup could not be built.'); });
       var m = /filename="([^"]+)"/.exec(r.headers.get('Content-Disposition') || '');
       return r.blob().then(function (b) { return new File([b], m ? m[1] : 'project-tabs-backup.zip', { type: 'application/zip' }); });
@@ -785,8 +871,17 @@
         });
         msg.textContent = ''; msg.append(again);
       });
-    }).catch(function (e) { msg.className = 'err'; msg.textContent = e.message; })
-      .then(function () { btn.disabled = false; btn.textContent = idle; });
+    }).catch(function (e) {
+      if (e && e.needPin) {
+        msg.className = 'note'; msg.textContent = 'Some sections are locked, so your PIN is needed before a backup can be made.';
+        retrying = true;
+        btn.disabled = false; btn.textContent = idle;
+        return askPin('Enter your PIN to include locked sections in the backup.').then(function () {
+          downloadBackup(btn, msg);
+        }).catch(function () { /* cancelled */ });
+      }
+      msg.className = 'err'; msg.textContent = e.message;
+    }).then(function () { if (!retrying) { btn.disabled = false; btn.textContent = idle; } });
   }
 
   function driveSetupForm(box, d, redraw) {
@@ -944,9 +1039,75 @@
     });
     pwBlock.append(cp, np, np2, pErr, pBtn);
 
+
+    // PIN lock
+    var pinBlock = h('section', { class: 'set-block' }, h('h3', { text: 'PIN lock for sections' }));
+    var pinBody = h('div', { class: 'set-block' });
+    pinBlock.append(pinBody);
+    function digits(inp) { inp.setAttribute('inputmode', 'numeric'); inp.maxLength = 6; inp.addEventListener('input', function () { inp.value = inp.value.replace(/\D/g, '').slice(0, 6); }); return inp; }
+    function pinField(id, label) { var f = field(id, label, 'password', 'off'); digits(f.querySelector('input')); return f; }
+    function val(f) { return f.querySelector('input').value; }
+    function drawPin() {
+      pinBody.innerHTML = '';
+      var note = h('p', { class: 'note', text: 'Lock any section with the padlock in its header. Its text and files stay hidden until you enter your 6-digit PIN, and re-lock after 5 minutes. The data is hidden, not encrypted: backups and exports contain it as plain text, so keep them private.' });
+      if (!me.pin_set) {
+        var pw0 = field('pinPw', 'Your password (to confirm)', 'password', 'current-password');
+        var p1 = pinField('pinNew1', 'New 6-digit PIN'), p2 = pinField('pinNew2', 'Repeat PIN');
+        var e0 = h('p', { class: 'err', role: 'alert' });
+        var go = h('button', { class: 'btn small', type: 'button', text: 'Create PIN' });
+        go.addEventListener('click', function () {
+          if (val(p1) !== val(p2)) { e0.textContent = 'The two PINs do not match.'; return; }
+          api('pin.set', { password: val(pw0), pin: val(p1) }).then(function () { me.pin_set = true; drawPin(); toast('PIN created. Use the padlock on a section to lock it.'); })
+            .catch(function (e) { e0.textContent = e.message; });
+        });
+        pinBody.append(note, pw0, p1, p2, e0, go);
+        return;
+      }
+      pinBody.append(h('p', { class: 'msg-ok', text: 'A PIN is set.' }), note);
+      var auto = h('input', { type: 'checkbox', id: 'lockCreds' });
+      auto.checked = !!me.lock_creds;
+      auto.addEventListener('change', function () {
+        api('pin.setting', { lock_creds: auto.checked }).then(function () { me.lock_creds = auto.checked; }).catch(function (e) { auto.checked = !auto.checked; toast(e.message); });
+      });
+      pinBody.append(h('label', { class: 'check-row', for: 'lockCreds' }, auto, h('span', { text: 'Lock new "Credentials" sections automatically' })));
+      var lockNow = h('button', { class: 'btn small alt', type: 'button', text: 'Lock everything now' });
+      lockNow.addEventListener('click', function () { api('pin.lock').then(function () { toast('All locked sections are hidden.'); relockView(); }).catch(function (e) { toast(e.message); }); });
+      // change
+      var cur1 = pinField('pinCur', 'Current PIN'), n1 = pinField('pinChg1', 'New PIN'), n2 = pinField('pinChg2', 'Repeat new PIN');
+      var e1 = h('p', { class: 'err', role: 'alert' });
+      var chg = h('button', { class: 'btn small', type: 'button', text: 'Change PIN' });
+      chg.addEventListener('click', function () {
+        if (val(n1) !== val(n2)) { e1.className = 'err'; e1.textContent = 'The new PINs do not match.'; return; }
+        api('pin.change', { pin: val(cur1), new: val(n1) }).then(function () {
+          e1.className = 'msg-ok'; e1.textContent = 'PIN changed.'; [cur1, n1, n2].forEach(function (f) { f.querySelector('input').value = ''; });
+        }).catch(function (e) { e1.className = 'err'; e1.textContent = e.message; });
+      });
+      // forgot
+      var rs = h('div', { class: 'set-block' });
+      var forgot = h('button', { class: 'link-btn', type: 'button', text: 'Forgot your PIN?' });
+      forgot.addEventListener('click', function () {
+        forgot.remove();
+        var rpw = field('pinRPw', 'Your account password', 'password', 'current-password');
+        var rcode = me.totp ? field('pinRCode', 'Authenticator code or a recovery code', 'text', 'one-time-code') : null;
+        var r1 = pinField('pinR1', 'New 6-digit PIN');
+        var e2 = h('p', { class: 'err', role: 'alert' });
+        var rgo = h('button', { class: 'btn small', type: 'button', text: 'Reset PIN' });
+        rgo.addEventListener('click', function () {
+          api('pin.reset', { password: val(rpw), code: rcode ? val(rcode) : '', new: val(r1) }).then(function () {
+            rs.innerHTML = ''; rs.append(h('p', { class: 'msg-ok', text: 'PIN reset. Your locked sections and their contents were not touched.' }));
+          }).catch(function (e) { e2.textContent = e.message; });
+        });
+        rs.append(h('p', { class: 'note', text: 'Resetting needs your account password' + (me.totp ? ' and a code from your authenticator app (or a recovery code)' : '') + '. Nothing is lost.' }), rpw);
+        if (rcode) rs.append(rcode);
+        rs.append(r1, e2, rgo);
+      });
+      pinBody.append(lockNow, h('h4', { text: 'Change PIN' }), cur1, n1, n2, e1, chg, forgot, rs);
+    }
+    drawPin();
+
     body.append(h('p', { class: 'note', text: 'Signed in as ' + me.username }));
     renderBackup(body);
-    body.append(tf, pwBlock);
+    body.append(pinBlock, tf, pwBlock);
   }
 
   /* ---------- keyboard ---------- */

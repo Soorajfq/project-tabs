@@ -12,11 +12,14 @@ A small, private, self-hosted notebook for keeping everything about a project in
 - Every section is a plain-text box that grows as you type. Links become clickable.
 - Attach images and documents to any section by drag and drop, paste, or the attach button.
 
+<p><img src="docs/pin-locked.png" width="420" alt="Locked section"> <img src="docs/pin-prompt.png" width="420" alt="PIN prompt"></p>
+
 <p><img src="docs/groups-phone.png" width="200" alt="Project groups on phone"> <img src="docs/phone-tabs.png" width="200" alt="Phone"> <img src="docs/desktop-dark.png" width="480" alt="Dark mode"></p>
 
 ## Features
 
 - **Project groups**: coloured, collapsible groups in the project list (drag a project onto a group, or use the ⋯ menu), plus a search box
+- **PIN lock for sections**: lock any section (e.g. Credentials) behind a 6-digit PIN. It stays masked until you enter the PIN, then re-locks after 5 minutes. Wrong guesses are throttled; a forgotten PIN is reset with your password plus a 2FA code.
 - Single user, password login with optional 2FA (any authenticator app) and recovery codes
 - Reusable, recolourable tab titles; light and dark themes
 - Autosave, image downscaling, lightbox viewer
@@ -42,6 +45,7 @@ Full steps, Google Drive setup, cron and troubleshooting are in [INSTALL.md](INS
 - One user only, by design.
 - Backups can be exported and stored, but there is no in-app Restore button yet.
 - Plain text only (no rich formatting).
+- The PIN lock hides sections but does not encrypt them: the database, exports and Google Drive backups hold the text as plain text, so keep those private.
 
 ## Roadmap
 

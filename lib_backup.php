@@ -33,6 +33,7 @@ function build_backup_zip(string $dest): array {
 
     $tray = $pdo->query('SELECT id, title, color, position FROM tray_titles ORDER BY position, id')->fetchAll();
     ensure_groups();
+    ensure_locks();
     $projects = $pdo->query('SELECT * FROM projects ORDER BY id')->fetchAll();
     $groups = $pdo->query('SELECT id, name, color, position FROM project_groups ORDER BY position, id')->fetchAll();
     $groupName = [];
@@ -77,7 +78,7 @@ function build_backup_zip(string $dest): array {
                 $md .= rtrim($s['body']) . "\n\n";
             }
             $sj = [
-                'id' => $sid, 'title' => $s['title'], 'color' => $s['color'], 'body' => $s['body'],
+                'id' => $sid, 'title' => $s['title'], 'color' => $s['color'], 'locked' => !empty($s['locked']), 'body' => $s['body'],
                 'position' => (int)$s['position'], 'created_at' => $s['created_at'], 'updated_at' => $s['updated_at'],
                 'files' => [],
             ];

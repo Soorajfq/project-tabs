@@ -341,3 +341,84 @@ function ensure_groups(): void {
     }
     $done = true;
 }
+
+/* ---------- PIN lock for sections (added in v1.2). Add-only migration. ---------- */
+
+function ensure_locks(): void {
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $pdo = db();
+    $st = $pdo->prepare("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sections' AND COLUMN_NAME = 'locked'");
+    $st->execute();
+    if ((int)$st->fetchColumn() === 0) {
+        $pdo->exec('ALTER TABLE sections ADD COLUMN locked TINYINT(1) NOT NULL DEFAULT 0');
+    }
+    $done = true;
+}
+
+const PIN_WINDOW_SECS = 300;
+
+function pin_is_set(): bool {
+    return (string)setting_get('pin_hash', '') !== '';
+}
+
+/** True while the PIN was entered in this session within the last 5 minutes. */
+function pin_open(bool $extend = false): bool {
+    start_session();
+    $until = (int)($_SESSION['pin_until'] ?? 0);
+    if ($until > time()) {
+        if ($extend) {
+            $_SESSION['pin_until'] = time() + PIN_WINDOW_SECS;
+        }
+        return true;
+    }
+    return false;
+}
+
+function pin_open_now(): void {
+    start_session();
+    $_SESSION['pin_until'] = time() + PIN_WINDOW_SECS;
+}
+
+function pin_close(): void {
+    start_session();
+    unset($_SESSION['pin_until']);
+}
+
+function pin_valid_format(string $pin): bool {
+    return (bool)preg_match('/^\d{6}$/', $pin);
+}
+
+function pin_key(): string {
+    return 'p:' . substr(client_ip(), 0, 40);
+}
+
+function pin_too_many(): bool {
+    $st = db()->prepare('SELECT COUNT(*) FROM login_attempts WHERE ip = ? AND created_at > ?');
+    $st->execute([pin_key(), gmdate('Y-m-d H:i:s', time() - 900)]);
+    return (int)$st->fetchColumn() >= 5;
+}
+
+function pin_record_fail(): void {
+    db()->prepare('INSERT INTO login_attempts (ip, created_at) VALUES (?, ?)')->execute([pin_key(), now()]);
+}
+
+function pin_clear_fails(): void {
+    db()->prepare('DELETE FROM login_attempts WHERE ip = ?')->execute([pin_key()]);
+}
+
+/** Checks a PIN with throttling. Returns true if right. Throws RuntimeException with a message otherwise. */
+function pin_check(string $pin): bool {
+    if (pin_too_many()) {
+        throw new RuntimeException('Too many wrong PINs. Wait 15 minutes and try again.');
+    }
+    $hash = (string)setting_get('pin_hash', '');
+    if ($hash === '' || !pin_valid_format($pin) || !password_verify($pin, $hash)) {
+        pin_record_fail();
+        throw new RuntimeException('That PIN is not right.');
+    }
+    pin_clear_fails();
+    return true;
+}

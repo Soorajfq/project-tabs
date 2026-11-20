@@ -3,6 +3,7 @@
 require __DIR__ . '/lib.php';
 security_headers();
 start_session();
+ensure_locks();
 
 try {
     $user = current_user();
@@ -22,6 +23,13 @@ $path = $f ? upload_path($f['stored_name']) : '';
 if (!$f || !is_file($path)) {
     http_response_code(404);
     exit('File not found.');
+}
+
+$ls = db()->prepare('SELECT locked FROM sections WHERE id = ?');
+$ls->execute([(int)$f['section_id']]);
+if ((int)$ls->fetchColumn() === 1 && !pin_open(true)) {
+    http_response_code(423);
+    exit('This file is in a locked section.');
 }
 
 $inlineOk = (bool)$f['is_image'] && empty($_GET['dl']);

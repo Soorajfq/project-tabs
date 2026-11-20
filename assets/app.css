@@ -254,3 +254,15 @@ a.d-name:hover{text-decoration:underline;color:var(--accent)}
 
 .set-block ol{margin:0;padding-left:20px;color:var(--muted);display:flex;flex-direction:column;gap:6px}
 .set-block .link-btn{align-self:flex-start}
+
+/* ---------- PIN lock (v1.2) ---------- */
+.s-lock.on{color:#fff;background:rgba(255,255,255,.22)}
+.section.masked .mask{display:flex;flex-direction:column;align-items:center;gap:10px;padding:26px 16px 24px;text-align:center}
+.mask-dots{font:700 22px/1 var(--f-display);letter-spacing:.12em;color:var(--muted);user-select:none}
+.mask-note{font-size:13px;color:var(--muted)}
+.pin-card{max-width:340px}
+.pin-card h3{margin:0;font:700 18px var(--f-display)}
+.pin-input{height:52px;text-align:center;font:600 24px var(--f-display);letter-spacing:.5em;padding:0 0 0 .5em;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;width:100%}
+.pin-input:focus{outline:2px solid var(--accent);border-color:transparent}
+.check-row{display:flex;align-items:center;gap:10px;color:var(--fg)}
+.set-block h4{margin:6px 0 0;font:600 13px var(--f-display);color:var(--muted);text-transform:uppercase;letter-spacing:.06em}

@@ -15,7 +15,7 @@ if (!$user) {
 }
 header('Cache-Control: no-store');
 $maxMb = (int)(cfg('max_upload_mb') ?: 20);
-$v = '3'; // bump to refresh cached CSS/JS after an update
+$v = '4'; // bump to refresh cached CSS/JS after an update
 ?><!doctype html>
 <html lang="en">
 <head>

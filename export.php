@@ -26,6 +26,10 @@ $tok = (string)($_SERVER['HTTP_X_CSRF_TOKEN'] ?? ($_POST['csrf'] ?? ''));
 if (!csrf_ok($tok)) {
     export_fail('Your session expired. Reload the page.', 403);
 }
+ensure_locks();
+if ((int)db()->query('SELECT COUNT(*) FROM sections WHERE locked = 1')->fetchColumn() > 0 && !pin_open(true)) {
+    export_fail('Some sections are locked. Enter your PIN first.', 423);
+}
 session_write_close();
 set_time_limit(300);
 ignore_user_abort(true);

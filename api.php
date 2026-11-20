@@ -17,6 +17,7 @@ if (!$user) {
 $method = $_SERVER['REQUEST_METHOD'];
 $pdo = db();
 ensure_groups();
+ensure_locks();
 
 /* ---------- small helpers ---------- */
 
@@ -41,14 +42,30 @@ function file_row(array $f): array {
 }
 
 function section_row(array $s, array $files = []): array {
+    $locked = !empty($s['locked']);
+    $masked = $locked && !pin_open();
     return [
         'id' => (int)$s['id'],
         'project_id' => (int)$s['project_id'],
         'title' => $s['title'],
         'color' => $s['color'],
-        'body' => $s['body'],
-        'files' => array_map('file_row', $files),
+        'locked' => $locked,
+        'masked' => $masked,
+        'body' => $masked ? '' : $s['body'],
+        'file_count' => count($files),
+        'files' => $masked ? [] : array_map('file_row', $files),
     ];
+}
+
+/** Stops a request that would read or change a locked section while the PIN is not open. */
+function require_section_open(int $sectionId): void {
+    $st = db()->prepare('SELECT locked FROM sections WHERE id = ?');
+    $st->execute([$sectionId]);
+    if ((int)$st->fetchColumn() === 1) {
+        if (!pin_open(true)) {
+            fail('This section is locked. Enter your PIN to open it.', 423);
+        }
+    }
 }
 
 function project_exists(int $id): bool {
@@ -87,7 +104,12 @@ if ($method === 'GET') {
         $groups = $pdo->query('SELECT id, name, color FROM project_groups ORDER BY position, id')->fetchAll();
         $tray = $pdo->query('SELECT id, title, color FROM tray_titles ORDER BY position, id')->fetchAll();
         json_out([
-            'me' => ['username' => $user['username'], 'totp' => (bool)$user['totp_enabled']],
+            'me' => [
+                'username' => $user['username'], 'totp' => (bool)$user['totp_enabled'],
+                'pin_set' => pin_is_set(),
+                'pin_secs' => pin_open() ? max(0, (int)$_SESSION['pin_until'] - time()) : 0,
+                'lock_creds' => setting_get('lock_creds', '0') === '1',
+            ],
             'projects' => array_map(function ($p) {
                 return ['id' => (int)$p['id'], 'name' => $p['name'], 'count' => (int)$p['cnt'], 'group_id' => $p['group_id'] === null ? null : (int)$p['group_id']];
             }, $projects),
@@ -98,6 +120,9 @@ if ($method === 'GET') {
                 return ['id' => (int)$t['id'], 'title' => $t['title'], 'color' => $t['color']];
             }, $tray),
         ]);
+    }
+    if ($a === 'pin') {
+        json_out(['secs' => pin_open() ? max(0, (int)$_SESSION['pin_until'] - time()) : 0]);
     }
     if ($a === 'drive') {
         json_out(drive_state() + [
@@ -241,9 +266,10 @@ try {
             fail('Project not found.', 404);
         }
         $title = str_in($in['title'] ?? '', 120);
+        $autoLock = pin_is_set() && setting_get('lock_creds', '0') === '1' && strtolower(trim($title)) === 'credentials' ? 1 : 0;
         $pdo->beginTransaction();
-        $pdo->prepare('INSERT INTO sections (project_id, title, color, body, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-            ->execute([$pid, $title === '' ? 'Untitled' : $title, color_in($in['color'] ?? ''), '', 999999, now(), now()]);
+        $pdo->prepare('INSERT INTO sections (project_id, title, color, locked, body, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+            ->execute([$pid, $title === '' ? 'Untitled' : $title, color_in($in['color'] ?? ''), $autoLock, '', 999999, now(), now()]);
         $newId = (int)$pdo->lastInsertId();
         $st = $pdo->prepare('SELECT id FROM sections WHERE project_id = ? AND id <> ? ORDER BY position, id');
         $st->execute([$pid, $newId]);
@@ -272,6 +298,7 @@ try {
             $args[] = color_in($in['color']);
         }
         if (array_key_exists('body', $in)) {
+            require_section_open($id);
             $b = (string)$in['body'];
             if (strlen($b) > 4000000) {
                 fail('That text is too long to save (over 4 MB).');
@@ -284,6 +311,22 @@ try {
             $args[] = now();
             $args[] = $id;
             $pdo->prepare('UPDATE sections SET ' . implode(', ', $sets) . ' WHERE id = ?')->execute($args);
+        }
+        json_out(['ok' => true]);
+    }
+
+    case 'section.lock': {
+        $id = (int)($in['id'] ?? 0);
+        $want = !empty($in['locked']);
+        if ($want) {
+            if (!pin_is_set()) {
+                fail('Set a PIN in Settings first.');
+            }
+            $pdo->prepare('UPDATE sections SET locked = 1 WHERE id = ?')->execute([$id]);
+            pin_close(); // locking ends the open window so the section hides straight away
+        } else {
+            require_section_open($id);
+            $pdo->prepare('UPDATE sections SET locked = 0 WHERE id = ?')->execute([$id]);
         }
         json_out(['ok' => true]);
     }
@@ -348,6 +391,7 @@ try {
     /* --- files --- */
     case 'file.upload': {
         $sid = (int)($in['section_id'] ?? 0);
+        require_section_open($sid);
         $st = $pdo->prepare('SELECT id, project_id FROM sections WHERE id = ?');
         $st->execute([$sid]);
         $sec = $st->fetch();
@@ -397,6 +441,12 @@ try {
 
     case 'file.delete': {
         $id = (int)($in['id'] ?? 0);
+        $st = $pdo->prepare('SELECT section_id FROM files WHERE id = ?');
+        $st->execute([$id]);
+        $fsec = $st->fetchColumn();
+        if ($fsec) {
+            require_section_open((int)$fsec);
+        }
         $st = $pdo->prepare('SELECT stored_name FROM files WHERE id = ?');
         $st->execute([$id]);
         $name = $st->fetchColumn();
@@ -461,6 +511,77 @@ try {
         }
         $pdo->prepare('UPDATE users SET password_hash = ? WHERE id = ?')->execute([password_hash($new, PASSWORD_DEFAULT), $user['id']]);
         session_regenerate_id(true);
+        json_out(['ok' => true]);
+    }
+
+    /* --- PIN lock --- */
+    case 'pin.set': {
+        if (pin_is_set()) {
+            fail('A PIN is already set. Use "Change PIN" instead.');
+        }
+        if (!password_verify((string)($in['password'] ?? ''), $user['password_hash'])) {
+            fail('That password is not right.');
+        }
+        $pin = (string)($in['pin'] ?? '');
+        if (!pin_valid_format($pin)) {
+            fail('The PIN must be exactly 6 digits.');
+        }
+        setting_set('pin_hash', password_hash($pin, PASSWORD_DEFAULT));
+        json_out(['ok' => true]);
+    }
+
+    case 'pin.change': {
+        pin_check((string)($in['pin'] ?? ''));
+        $new = (string)($in['new'] ?? '');
+        if (!pin_valid_format($new)) {
+            fail('The new PIN must be exactly 6 digits.');
+        }
+        setting_set('pin_hash', password_hash($new, PASSWORD_DEFAULT));
+        pin_close();
+        json_out(['ok' => true]);
+    }
+
+    case 'pin.reset': {
+        // Forgot the PIN: needs the account password and, if on, a two-factor or recovery code.
+        if (pin_too_many()) {
+            fail('Too many wrong attempts. Wait 15 minutes and try again.');
+        }
+        $new = (string)($in['new'] ?? '');
+        if (!pin_valid_format($new)) {
+            fail('The new PIN must be exactly 6 digits.');
+        }
+        $good = password_verify((string)($in['password'] ?? ''), $user['password_hash']);
+        if ($good && $user['totp_enabled']) {
+            $code = (string)($in['code'] ?? '');
+            $good = totp_verify_login($user, $code) || use_recovery_code((int)$user['id'], $code);
+        }
+        if (!$good) {
+            pin_record_fail();
+            fail($user['totp_enabled'] ? 'The password or the code is not right.' : 'That password is not right.');
+        }
+        pin_clear_fails();
+        setting_set('pin_hash', password_hash($new, PASSWORD_DEFAULT));
+        pin_close();
+        json_out(['ok' => true]);
+    }
+
+    case 'pin.unlock': {
+        try {
+            pin_check((string)($in['pin'] ?? ''));
+        } catch (RuntimeException $e) {
+            fail($e->getMessage(), 403);
+        }
+        pin_open_now();
+        json_out(['ok' => true, 'secs' => PIN_WINDOW_SECS]);
+    }
+
+    case 'pin.lock': {
+        pin_close();
+        json_out(['ok' => true]);
+    }
+
+    case 'pin.setting': {
+        setting_set('lock_creds', !empty($in['lock_creds']) ? '1' : '0');
         json_out(['ok' => true]);
     }
 
